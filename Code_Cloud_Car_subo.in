@@ -1,0 +1,168 @@
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
+#include <Subo.h>
+
+// ===== WiFi =====
+const char* ssid = "WIFI SSID";
+const char* password = "PASSWORD";
+
+// ===== MQTT =====
+const char* mqtt_server = "------";
+const int mqtt_port = 8883;
+const char* mqtt_user = "----------";
+const char* mqtt_pass = "---------";   //REPLACE WITH YOUR CREDENTIALS
+
+WiFiClientSecure espClient;
+PubSubClient client(espClient);
+
+// ===== Motor Pins =====
+#define RPWM_L 4
+#define LPWM_L 39
+#define RPWM_R 13
+#define LPWM_R 38
+
+// ===== FIXED PINS =====
+#define HEADLIGHT_PIN 14
+#define BUZZER_PIN 48
+
+bool headlightState = false;
+int speedVal = 150;
+
+// ===== Motor Functions =====
+void forward(){
+  SuboMatrixFillColor(0,255,0);
+  ledcWrite(RPWM_L, speedVal);
+  ledcWrite(LPWM_L, 0);
+  ledcWrite(RPWM_R, speedVal);
+  ledcWrite(LPWM_R, 0);
+}
+
+void reverse(){
+  SuboMatrixFillColor(255,0,0);
+  ledcWrite(RPWM_L, 0);
+  ledcWrite(LPWM_L, speedVal);
+  ledcWrite(RPWM_R, 0);
+  ledcWrite(LPWM_R, speedVal);
+}
+
+void left(){
+  SuboMatrixFillColor(255,255,0);
+  ledcWrite(RPWM_L, 0);
+  ledcWrite(LPWM_L, speedVal);
+  ledcWrite(RPWM_R, speedVal);
+  ledcWrite(LPWM_R, 0);
+}
+
+void right(){
+  SuboMatrixFillColor(0,0,255);
+  ledcWrite(RPWM_L, speedVal);
+  ledcWrite(LPWM_L, 0);
+  ledcWrite(RPWM_R, 0);
+  ledcWrite(LPWM_R, speedVal);
+}
+
+void stopCar(){
+  SuboMatrixFillColor(255,255,255);
+  ledcWrite(RPWM_L, 0);
+  ledcWrite(LPWM_L, 0);
+  ledcWrite(RPWM_R, 0);
+  ledcWrite(LPWM_R, 0);
+}
+
+// ===== Headlight =====
+void toggleHeadlight(){
+  headlightState = !headlightState;
+  digitalWrite(HEADLIGHT_PIN, headlightState);
+}
+
+// ===== External Buzzer =====
+void hornOn(){
+  digitalWrite(BUZZER_PIN, HIGH);
+}
+
+void hornOff(){
+  digitalWrite(BUZZER_PIN, LOW);
+}
+
+// ===== MQTT Callback =====
+void callback(char* topic, byte* payload, unsigned int length) {
+
+  String msg = "";
+
+  for(int i=0;i<length;i++){
+    msg += (char)payload[i];
+  }
+
+  if(msg=="F") forward();
+  else if(msg=="B") reverse();
+  else if(msg=="L") left();
+  else if(msg=="R") right();
+  else if(msg=="S") stopCar();
+
+  else if(msg.startsWith("V")){
+    speedVal = constrain(msg.substring(1).toInt(), 0, 255);
+  }
+
+  else if(msg=="H") toggleHeadlight();
+
+  else if(msg=="P") hornOn();
+  else if(msg=="O") hornOff();
+}
+
+// ===== WiFi =====
+void setup_wifi(){
+  Serial.begin(115200);
+  WiFi.begin(ssid,password);
+
+  while(WiFi.status()!=WL_CONNECTED){
+    delay(500);
+    Serial.print(".");
+  }
+}
+
+// ===== MQTT =====
+void reconnect(){
+  while(!client.connected()){
+    if(client.connect("SuboCar", mqtt_user, mqtt_pass)){
+      client.subscribe("car/control");
+      SuboMatrixFillColor(0,50,255);
+    } else {
+      delay(2000);
+    }
+  }
+}
+
+// ===== Setup =====
+void setup(){
+
+  SuboMatrixInit();
+
+  // Motors
+  ledcAttach(RPWM_L,1000,8);
+  ledcAttach(LPWM_L,1000,8);
+  ledcAttach(RPWM_R,1000,8);
+  ledcAttach(LPWM_R,1000,8);
+
+  // Headlight + Buzzer
+  pinMode(HEADLIGHT_PIN, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+
+  digitalWrite(HEADLIGHT_PIN, LOW);
+  digitalWrite(BUZZER_PIN, LOW);
+
+  setup_wifi();
+
+  espClient.setInsecure();
+
+  client.setServer(mqtt_server, mqtt_port);
+  client.setCallback(callback);
+}
+
+// ===== Loop =====
+void loop(){
+  if(!client.connected()){
+    reconnect();
+  }
+  client.loop();
+}
